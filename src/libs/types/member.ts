@@ -2,7 +2,7 @@ import { ObjectId } from "mongoose";
 import { MemberStatus, MemberType } from "../enums/member.enum";
 import { Request } from "express";
 import { Session } from 'express-session';
-
+import { ObjectID } from '../../../node_modules/connect-mongodb-session/node_modules/mongodb/src/index';
 
 export interface Member {
     _id: ObjectId;
