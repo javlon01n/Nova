@@ -16,7 +16,8 @@ class MemberService {
        this.memberModel = MemberModel;
     }
 
-     /** SPA */
+
+    /** SPA */
 
     public async getRestaurant(): Promise<Member> {
         const result = await this.memberModel
@@ -26,4 +27,214 @@ class MemberService {
 
         return result as unknown as Member;
     }
+
+
+    public async signup(input: MemberInput): Promise<Member> {
+        const salt = await bcrypt.genSalt();
+        input.memberPassword = await bcrypt.hash(input.memberPassword, salt);
+
+        try {
+            const result = await this.memberModel.create(input);
+            result.memberPassword = "";
+            return result.toJSON() as unknown as Member;
+        }   catch (err) {
+            console.log("Error, model:signup", err);
+            throw new Errors(HttpCode.BAD_REQUEST, Message.USED_NICK_PHONE);
+        }
+    }
+
+    public async login(input: LoginInput): Promise<Member> {
+        const member = await this.memberModel
+        .findOne(
+            { memberNick: input.memberNick,
+                memberStatus: { $ne: MemberStatus.DELETE },
+             },
+            { memberNick: 1, memberPassword: 1, memberStatus: 1}
+        )
+        .exec();
+        if (!member) throw new Errors(HttpCode.NOT_FOUND, Message.NO_MEMBER_NICK);
+        else if (member.memberStatus === MemberStatus.BLOCK) {
+            throw new Errors(HttpCode.FORBIDDEN, Message.BLOCKED_USER);
+        }
+
+        const isMatch = await bcrypt.compare(
+            input.memberPassword,
+            member.memberPassword
+
+        );
+        if (!isMatch) {
+            throw new Errors(HttpCode.UNAUTHORIZED, Message.WRONG_PASSWORD);
+
+        }
+
+
+        return await this.memberModel.findById(member._id).lean().exec() as unknown as Member;
+    }
+
+
+    public async googleLogin(input: GoogleLoginInput): Promise<Member> {
+        const existing = await this.memberModel
+        .findOne({ memberEmail: input.email, memberStatus: { $ne: MemberStatus.DELETE } })
+        .exec();
+
+        if (existing) {
+            if (existing.memberStatus === MemberStatus.BLOCK) {
+                throw new Errors(HttpCode.FORBIDDEN, Message.BLOCKED_USER);
+            }
+            return existing.toJSON() as unknown as Member;
+        }
+
+        const salt = await bcrypt.genSalt();
+        const randomPassword = await bcrypt.hash(uuidv4(), salt);
+
+        const nickBase = input.email.split("@")[0];
+        let memberNick = nickBase;
+        let suffix = 0;
+        while (await this.memberModel.exists({ memberNick })) {
+            suffix += 1;
+            memberNick = `${nickBase}${suffix}`;
+        }
+
+        try {
+            const result = await this.memberModel.create({
+                memberNick,
+                memberPhone: `google-${input.googleId}`,
+                memberPassword: randomPassword,
+                memberEmail: input.email,
+                memberImage: input.picture,
+            });
+            result.memberPassword = "";
+            return result.toJSON() as unknown as Member;
+        } catch (err) {
+            console.log("Error, model:googleLogin", err);
+            throw new Errors(HttpCode.BAD_REQUEST, Message.GOOGLE_AUTH_FAILED);
+        }
+    }
+
+
+    public async getMemberDetail(member: Member): Promise<Member> {
+        const memberId = shapeIntoMongooseObjectId(member._id);
+        const result = await this.memberModel
+        .findOne({ _id: memberId, memberStatus: MemberStatus.ACTIVE})
+        .exec ();
+        if (!result) throw new Errors(HttpCode.NOT_FOUND, Message.NO_DATA_FOUND);
+
+        return result as unknown as Member;
+    }
+
+
+    public async updateMember(
+        member: Member,
+        input: MemberUpdateInput
+    ): Promise<Member> {
+        const memberId = shapeIntoMongooseObjectId(member._id);
+        const result = await this.memberModel
+        .findOneAndUpdate({ _id: memberId }, input, { new: true }) //idni member Idga tenglayabmiz va 2-argumentda yanglashimiz kerak bo'lgan objectni berayabmiz va 3-si obtion xisoblanadi unda yangilangan malumotni ber deyapmiz
+        .exec();
+        if (!result) throw new Errors(HttpCode.NOT_MODIFIED, Message.UPDATE_FAILED);
+
+        return result as unknown as Member;
+    }
+
+    public async getTopUsers(): Promise<Member[]> {
+        const result = await this.memberModel
+        .find({
+            memberStatus: MemberStatus.ACTIVE, //sorching condition berayapmiz 
+            memberPoints: { $gte: 1 }, //bu yergacha bo'lgan natija bizga qureyni beradi
+        })
+        .sort({ memberPoints: -1 })
+        .limit(4)
+        .exec();
+        if (!result) throw new Errors(HttpCode.NOT_FOUND, Message.NO_DATA_FOUND);
+
+        return result as unknown as Member[];
+    }
+
+
+    public async addUserPoint (member: Member, point: number): Promise<Member> {
+        const memberId = shapeIntoMongooseObjectId (member._id);
+        
+        return await this.memberModel
+        .findOneAndUpdate(
+            {
+                _id: memberId, 
+                memberType: MemberType.USER,
+                memberStatus: MemberStatus.ACTIVE,
+            },
+            { $inc: { memberPoints: point } },
+            {new: true }
+        )
+        .exec ();
+    }
+
+
+    /** SSR */
+
+    public async processSignup(input: MemberInput): Promise<Member> {
+        const exist = await this.memberModel
+         .findOne({ memberType: MemberType.RESTAURANT})
+         .exec();
+        if (exist) throw new Errors(HttpCode.BAD_REQUEST, Message.CREATE_FAILED);
+
+        console.log("before:", input.memberPassword)
+        const salt = await bcrypt.genSalt();
+        input.memberPassword = await bcrypt.hash(input.memberPassword, salt);
+        console.log("after:", input.memberPassword)
+
+        try {
+            const result = await this.memberModel.create(input);
+            result.memberPassword = "";
+            return result as unknown as Member;
+        }   catch (err) {
+            throw new Errors(HttpCode.BAD_REQUEST, Message.CREATE_FAILED);
+        }
+    }
+
+    public async processLogin(input: LoginInput): Promise<Member> {
+        const member = await this.memberModel
+        .findOne(
+            { memberNick: input.memberNick },  // FILTER
+            { memberNick: 1, memberPassword: 1} // PROJECTION
+        )
+        .exec();
+        if (!member) throw new Errors(HttpCode.NOT_FOUND, Message.NO_MEMBER_NICK);
+
+        const isMatch = await bcrypt.compare(
+            input.memberPassword,
+            member.memberPassword
+        );
+
+
+        if (!isMatch) {
+            throw new Errors(HttpCode.UNAUTHORIZED, Message.WRONG_PASSWORD);
+        }
+
+        return await this.memberModel.findById(member._id).exec() as unknown as Member;
+    }
+
+    public async getUsers(): Promise<Member[]> {
+        const result = await this.memberModel
+        .find({ memberType: MemberType.USER})
+        .exec();
+    if (!result) throw new Errors(HttpCode.NOT_FOUND, Message.NO_DATA_FOUND);
+
+    return result as unknown as Member[];
+     
+    }
+
+    public async updateChosenUser(input: MemberUpdateInput ): Promise<Member[]> {
+        input._id = shapeIntoMongooseObjectId(input._id);
+        const result = await this.memberModel
+        .findByIdAndUpdate({ _id: input._id }, //fiter
+             input,  //obdate
+             {new: true}) //obtion
+        .exec();
+    if (!result) throw new Errors(HttpCode.NOT_MODIFIED, Message.UPDATE_FAILED);
+
+    return result as unknown as Member[];
+     
+    }
 }
+
+
+export default MemberService;

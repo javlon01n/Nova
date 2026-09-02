@@ -1,15 +1,67 @@
-import  express from "express";
+import express from 'express';
 const router = express.Router();
-import memberController from "./controllers/member.controller"
+import memberController from './controllers/member.controller';
+import uploader from "./libs/utils/uploader"
+import productController from './controllers/product.controller';
+import orderController from './controllers/order.controller';
 
-router.get("/", memberController.goHome);
 /** Member */
 router.get("/member/restaurant",memberController.getRestaurant);
-router.get("/login", memberController.getLogin);
+router.post("/member/login", memberController.login);
+router.post("/member/signup", memberController.signup);
+router.post("/member/google-login", memberController.googleLogin);
+router.post(
+    "/member/logout",
+    memberController.verifyAuth, 
+    memberController.logout
+);
+router.get(
+    "/member/detail", 
+    memberController.verifyAuth,
+    memberController.getMemberDetail);
 
-router.get("/signup", memberController.getSignup);
+router.post(
+    "/member/update",
+    memberController.verifyAuth,
+uploader("members").single("memberImage"),
+memberController.updateMember
+);
+
+router.get("/member/top-users", memberController.getTopUsers);
 
 
+/** Product */
+router.get("/product/all", productController.getProducts);
+router.get("/product/:id", 
+    memberController.retrieveAuth, 
+    productController.getProduc
+);
 
+
+/** Order */
+router.post("/order/create",
+    memberController.verifyAuth,
+    orderController.createOrder
+);
+
+router.get("/order/all", 
+    memberController.verifyAuth,
+    orderController.getMyOrders
+);
+
+router.post("/order/update",
+    memberController.verifyAuth,
+    orderController.updateOrder
+);
+
+router.post("/order/item/return",
+    memberController.verifyAuth,
+    orderController.updateOrderItem
+);
+
+router.post("/order/item/delete",
+    memberController.verifyAuth,
+    orderController.deleteOrderItem
+);
 
 export default router;
